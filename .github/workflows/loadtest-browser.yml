@@ -28,6 +28,10 @@ on:
       session_time:
         description: 'Session time as epoch ms. Leave blank to use today at 17:00 UTC+7 automatically.'
         default: ''
+      enable_youtube:
+        description: 'Enable YouTube playback in bots (tests YouTube load in classroom)'
+        type: boolean
+        default: false
 
 jobs:
   setup:
@@ -95,6 +99,7 @@ jobs:
           TABS_PER_BATCH:        ${{ inputs.tabs_per_batch }}
           BATCH:                 ${{ matrix.batch }}
           SESSION_TIME:          ${{ inputs.session_time }}
+          ENABLE_YOUTUBE:        ${{ inputs.enable_youtube }}
           LOAD_TEST_CREDENTIALS: ${{ secrets.LOAD_TEST_CREDENTIALS }}
         run: node run-batch.js
 
