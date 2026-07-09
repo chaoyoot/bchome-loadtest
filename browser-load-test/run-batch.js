@@ -1,4 +1,6 @@
 const { chromium } = require("playwright");
+const fs = require("fs");
+const path = require("path");
 
 const CLIENT_HOST = process.env.CLIENT_HOST;
 const MOODLE_BASE = process.env.MOODLE_BASE;
@@ -9,21 +11,14 @@ const TABS        = parseInt(process.env.TABS_PER_BATCH) || 10;
 const NUM_USERS   = parseInt(process.env.NUM_USERS);
 const ALL_CREDS   = JSON.parse(process.env.LOAD_TEST_CREDENTIALS);
 
-// Returns epoch ms for the session time.
-// If SESSION_TIME env var is provided, use it.
-// Otherwise default to today at 5:00 PM UTC+7 (= 10:00 AM UTC).
+const SCREENSHOT_DIR = path.join("screenshots", `batch-${BATCH}`);
+fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+
 function getSessionTime() {
   const override = process.env.SESSION_TIME;
-  if (override && override.trim() !== '') {
-    return parseInt(override.trim());
-  }
+  if (override && override.trim() !== '') return parseInt(override.trim());
   const now = new Date();
-  return Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate(),
-    10, 0, 0, 0  // 10:00 AM UTC = 17:00 UTC+7
-  );
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 10, 0, 0, 0);
 }
 
 function buildRoomUrl(token) {
@@ -43,6 +38,12 @@ async function getToken(username, password) {
   const data = await res.json();
   if (!data.token) throw new Error(`Token failed for ${username}: ${JSON.stringify(data)}`);
   return data.token;
+}
+
+async function screenshot(page, username, label) {
+  const file = path.join(SCREENSHOT_DIR, `${username}-${label}.png`);
+  await page.screenshot({ path: file, fullPage: true }).catch(() => {});
+  console.log(`[${username}] screenshot saved: ${file}`);
 }
 
 (async () => {
@@ -93,37 +94,33 @@ async function getToken(username, password) {
     page.on("pageerror", (e) => console.error(`[${username}] page error: ${e.message}`));
 
     await page.goto(url);
-    console.log(`[${username}] page loaded — ${url}`);
+    console.log(`[${username}] page loaded`);
 
-    try {
-      const btn = page.locator(
-        'button:has-text("Got it"), button:has-text("Join the class anyway")'
-      );
-      await btn.waitFor({ state: "visible", timeout: 30_000 });
-      await page.waitForFunction(
-        () => {
-          const b = [...document.querySelectorAll("button")].find(
-            (el) => el.textContent.includes("Got it") ||
-                    el.textContent.includes("Join the class anyway")
-          );
-          return b && !b.disabled;
-        },
-        { timeout: 30_000 }
-      );
-      await btn.click();
-      console.log(`[${username}] entered room`);
-    } catch (e) {
-      console.error(`[${username}] could not click enter: ${e.message}`);
-    }
+    // The app auto-joins on a fresh browser (localStorage empty → forcedRefresh logic).
+    // We wait for the classroom to be visible instead of looking for "Got it".
+    // Take a screenshot 8 seconds after load to confirm state.
+    await new Promise((r) => setTimeout(r, 8_000));
+    await screenshot(page, username, "after-join");
+    console.log(`[${username}] in room (auto-joined)`);
 
     if (i < batchTokens.length - 1) {
       await new Promise((r) => setTimeout(r, 2000));
     }
   }
 
-  // Step 4: hold
-  console.log(`[batch-${BATCH}] all bots in room — holding ${HOLD_MS / 1000}s`);
-  await new Promise((r) => setTimeout(r, HOLD_MS));
+  // Step 4: hold, then take a final screenshot to confirm bots are still in room
+  const holdCheckMs = Math.min(HOLD_MS / 2, 60_000); // screenshot halfway through
+  console.log(`[batch-${BATCH}] holding ${HOLD_MS / 1000}s...`);
+  await new Promise((r) => setTimeout(r, holdCheckMs));
+
+  for (const { username, token } of batchTokens) {
+    const pages = browser.contexts().flatMap(ctx => ctx.pages());
+    // take mid-hold screenshot of first page as a sample
+    if (pages[0]) await screenshot(pages[0], `batch${BATCH}-sample`, "mid-hold");
+    break;
+  }
+
+  await new Promise((r) => setTimeout(r, HOLD_MS - holdCheckMs));
 
   await browser.close();
   console.log(`[batch-${BATCH}] done`);
