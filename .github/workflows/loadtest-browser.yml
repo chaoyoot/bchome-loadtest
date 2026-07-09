@@ -1,1 +1,55 @@
+name: Browser load test (100 students)
 
+on:
+  workflow_dispatch:
+    inputs:
+      client_host:
+        description: 'Client URL e.g. https://home.braincloudlearning.com'
+        required: true
+      room_id:
+        description: 'Room ID (the test room, NOT a real class)'
+        required: true
+      hold_minutes:
+        description: 'How long each bot stays in the room (minutes)'
+        default: '5'
+      tabs_per_batch:
+        description: 'Chrome tabs per job (5 = 100 total with 20 jobs)'
+        default: '5'
+
+jobs:
+  student-bots:
+    strategy:
+      matrix:
+        batch: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]
+      max-parallel: 20
+      fail-fast: false
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: browser-load-test
+        run: npm install
+
+      - name: Install Chromium browser
+        working-directory: browser-load-test
+        run: npx playwright install chromium --with-deps
+
+      - name: Run student bots (batch ${{ matrix.batch }})
+        working-directory: browser-load-test
+        env:
+          CLIENT_HOST:        ${{ inputs.client_host }}
+          ROOM_ID:            ${{ inputs.room_id }}
+          HOLD_MINUTES:       ${{ inputs.hold_minutes }}
+          TABS_PER_BATCH:     ${{ inputs.tabs_per_batch }}
+          BATCH:              ${{ matrix.batch }}
+          LOAD_TEST_TOKENS:   ${{ secrets.LOAD_TEST_TOKENS }}
+        run: node run-batch.js
