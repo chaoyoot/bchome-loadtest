@@ -1,8 +1,21 @@
-name: Browser load test (100 students)
+name: Browser load test (configurable users)
 
 on:
   workflow_dispatch:
     inputs:
+      num_users:
+        description: 'Total number of student bots (1–1000)'
+        required: true
+        default: '20'
+      tabs_per_batch:
+        description: 'Chrome tabs per job — keep at 10 for stability (max 15)'
+        default: '10'
+      hold_minutes:
+        description: |
+          How long each bot stays in the room.
+          For 100 users: 10 min. For 500: 20 min. For 1000: 30 min.
+          Must be long enough for all waves to overlap in the room.
+        default: '10'
       client_host:
         description: 'Client app URL  e.g. https://home.braincloudlearning.com'
         required: true
@@ -12,20 +25,41 @@ on:
       room_id:
         description: 'Test room ID (NOT a real class)'
         required: true
-      hold_minutes:
-        description: 'Minutes each bot stays in room'
-        default: '5'
-      tabs_per_batch:
-        description: 'Chrome tabs per job (5 × 20 jobs = 100 students)'
-        default: '5'
 
 jobs:
+  # ── Step 1: calculate how many jobs we need ───────────────────────────────
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.build-matrix.outputs.matrix }}
+      num_jobs: ${{ steps.build-matrix.outputs.num_jobs }}
+    steps:
+      - name: Build job matrix
+        id: build-matrix
+        run: |
+          NUM_USERS=${{ inputs.num_users }}
+          TABS=${{ inputs.tabs_per_batch }}
+          NUM_JOBS=$(( (NUM_USERS + TABS - 1) / TABS ))
+
+          # GitHub matrix limit is 256 jobs
+          if [ $NUM_JOBS -gt 256 ]; then NUM_JOBS=256; fi
+
+          MATRIX=$(node -e "
+            const n = $NUM_JOBS;
+            console.log(JSON.stringify({ batch: Array.from({length: n}, (_, i) => i) }));
+          ")
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+          echo "num_jobs=$NUM_JOBS" >> $GITHUB_OUTPUT
+          echo "Calculated: $NUM_USERS users ÷ $TABS tabs = $NUM_JOBS jobs"
+
+  # ── Step 2: run all the browser batches ──────────────────────────────────
   student-bots:
+    needs: setup
     strategy:
-      matrix:
-        batch: [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19]
-      max-parallel: 20
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
       fail-fast: false
+      # No max-parallel set — GitHub runs as many as your account allows
+      # (free accounts: ~20 concurrent; higher plans: more)
 
     runs-on: ubuntu-latest
 
@@ -52,6 +86,7 @@ jobs:
           CLIENT_HOST:           ${{ inputs.client_host }}
           MOODLE_BASE:           ${{ inputs.moodle_base }}
           ROOM_ID:               ${{ inputs.room_id }}
+          NUM_USERS:             ${{ inputs.num_users }}
           HOLD_MINUTES:          ${{ inputs.hold_minutes }}
           TABS_PER_BATCH:        ${{ inputs.tabs_per_batch }}
           BATCH:                 ${{ matrix.batch }}
