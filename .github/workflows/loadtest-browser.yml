@@ -62,7 +62,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'          # ← updated from 20
 
       - name: Install dependencies
         working-directory: browser-load-test
@@ -85,3 +85,11 @@ jobs:
           SESSION_TIME:          ${{ inputs.session_time }}
           LOAD_TEST_CREDENTIALS: ${{ secrets.LOAD_TEST_CREDENTIALS }}
         run: node run-batch.js
+
+      - name: Upload screenshots          # ← new: saves screenshots as artifact
+        if: always()                      # runs even if the step above fails
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-batch-${{ matrix.batch }}
+          path: browser-load-test/screenshots/
+          if-no-files-found: ignore
