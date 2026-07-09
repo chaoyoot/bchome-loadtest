@@ -43,7 +43,7 @@ async function getToken(username, password) {
 async function screenshot(page, username, label) {
   const file = path.join(SCREENSHOT_DIR, `${username}-${label}.png`);
   await page.screenshot({ path: file, fullPage: true }).catch(() => {});
-  console.log(`[${username}] screenshot saved: ${file}`);
+  console.log(`[${username}] screenshot: ${label}`);
 }
 
 (async () => {
@@ -85,7 +85,9 @@ async function screenshot(page, username, label) {
     ],
   });
 
-  // Step 3: open tabs and join room
+  // Step 3: open tabs, join room, track page per username
+  const activeBots = []; // { username, page }
+
   for (let i = 0; i < batchTokens.length; i++) {
     const { username, token } = batchTokens[i];
     const url = buildRoomUrl(token);
@@ -96,31 +98,30 @@ async function screenshot(page, username, label) {
     await page.goto(url);
     console.log(`[${username}] page loaded`);
 
-    // The app auto-joins on a fresh browser (localStorage empty → forcedRefresh logic).
-    // We wait for the classroom to be visible instead of looking for "Got it".
-    // Take a screenshot 8 seconds after load to confirm state.
+    // App auto-joins on fresh browser (localStorage empty → BeforeRoom skipped).
+    // Wait 8 seconds then screenshot to confirm state.
     await new Promise((r) => setTimeout(r, 8_000));
     await screenshot(page, username, "after-join");
-    console.log(`[${username}] in room (auto-joined)`);
+    console.log(`[${username}] in room`);
+
+    activeBots.push({ username, page });
 
     if (i < batchTokens.length - 1) {
       await new Promise((r) => setTimeout(r, 2000));
     }
   }
 
-  // Step 4: hold, then take a final screenshot to confirm bots are still in room
-  const holdCheckMs = Math.min(HOLD_MS / 2, 60_000); // screenshot halfway through
+  // Step 4: hold — take per-user screenshot halfway through
+  const halfHold = Math.min(HOLD_MS / 2, 60_000);
   console.log(`[batch-${BATCH}] holding ${HOLD_MS / 1000}s...`);
-  await new Promise((r) => setTimeout(r, holdCheckMs));
+  await new Promise((r) => setTimeout(r, halfHold));
 
-  for (const { username, token } of batchTokens) {
-    const pages = browser.contexts().flatMap(ctx => ctx.pages());
-    // take mid-hold screenshot of first page as a sample
-    if (pages[0]) await screenshot(pages[0], `batch${BATCH}-sample`, "mid-hold");
-    break;
+  console.log(`[batch-${BATCH}] taking mid-hold screenshots...`);
+  for (const { username, page } of activeBots) {
+    await screenshot(page, username, "mid-hold");
   }
 
-  await new Promise((r) => setTimeout(r, HOLD_MS - holdCheckMs));
+  await new Promise((r) => setTimeout(r, HOLD_MS - halfHold));
 
   await browser.close();
   console.log(`[batch-${BATCH}] done`);
