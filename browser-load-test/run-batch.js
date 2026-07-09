@@ -2,17 +2,20 @@ const { chromium } = require("playwright");
 const fs = require("fs");
 const path = require("path");
 
-const CLIENT_HOST = process.env.CLIENT_HOST;
-const MOODLE_BASE = process.env.MOODLE_BASE;
-const ROOM_ID     = process.env.ROOM_ID;
-const HOLD_MS     = (parseInt(process.env.HOLD_MINUTES) || 10) * 60_000;
-const BATCH       = parseInt(process.env.BATCH);
-const TABS        = parseInt(process.env.TABS_PER_BATCH) || 10;
-const NUM_USERS   = parseInt(process.env.NUM_USERS);
-const ALL_CREDS   = JSON.parse(process.env.LOAD_TEST_CREDENTIALS);
+const CLIENT_HOST      = process.env.CLIENT_HOST;
+const MOODLE_BASE      = process.env.MOODLE_BASE;
+const ROOM_ID          = process.env.ROOM_ID;
+const HOLD_MS          = (parseInt(process.env.HOLD_MINUTES) || 10) * 60_000;
+const BATCH            = parseInt(process.env.BATCH);
+const TABS             = parseInt(process.env.TABS_PER_BATCH) || 10;
+const NUM_USERS        = parseInt(process.env.NUM_USERS);
+const ALL_CREDS        = JSON.parse(process.env.LOAD_TEST_CREDENTIALS);
+const ENABLE_YOUTUBE   = process.env.ENABLE_YOUTUBE === "true";
 
 const SCREENSHOT_DIR = path.join("screenshots", `batch-${BATCH}`);
 fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+
+console.log(`[batch-${BATCH}] YouTube support: ${ENABLE_YOUTUBE ? "ENABLED" : "disabled"}`);
 
 function getSessionTime() {
   const override = process.env.SESSION_TIME;
@@ -76,23 +79,43 @@ async function screenshot(page, username, label) {
   );
 
   // Step 2: open browser
-  const browser = await chromium.launch({
-    args: [
-      "--use-fake-ui-for-media-stream",
-      "--use-fake-device-for-media-stream",
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-    ],
-  });
+  // When YouTube is enabled, add extra flags to allow autoplay and
+  // hide headless detection so YouTube does not block the iframe.
+  const chromeArgs = [
+    "--use-fake-ui-for-media-stream",
+    "--use-fake-device-for-media-stream",
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+  ];
 
-  // Step 3: open tabs, join room, track page per username
+  if (ENABLE_YOUTUBE) {
+    chromeArgs.push(
+      "--autoplay-policy=no-user-gesture-required",
+      "--disable-blink-features=AutomationControlled"
+    );
+  }
+
+  const browser = await chromium.launch({ args: chromeArgs });
+
+  // When YouTube is enabled, use a real browser user agent so YouTube
+  // does not detect and block the headless Chrome iframe.
+  const contextOptions = ENABLE_YOUTUBE
+    ? {
+        userAgent:
+          "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 " +
+          "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      }
+    : {};
+
+  // Step 3: open tabs and join room
   const activeBots = []; // { username, page }
 
   for (let i = 0; i < batchTokens.length; i++) {
     const { username, token } = batchTokens[i];
     const url = buildRoomUrl(token);
 
-    const page = await browser.newPage();
+    const context = await browser.newContext(contextOptions);
+    const page    = await context.newPage();
     page.on("pageerror", (e) => console.error(`[${username}] page error: ${e.message}`));
 
     await page.goto(url);
@@ -111,7 +134,7 @@ async function screenshot(page, username, label) {
     }
   }
 
-  // Step 4: hold — take per-user screenshot halfway through
+  // Step 4: hold — screenshot each user halfway through
   const halfHold = Math.min(HOLD_MS / 2, 60_000);
   console.log(`[batch-${BATCH}] holding ${HOLD_MS / 1000}s...`);
   await new Promise((r) => setTimeout(r, halfHold));
