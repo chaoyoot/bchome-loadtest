@@ -9,6 +9,31 @@ const TABS        = parseInt(process.env.TABS_PER_BATCH) || 10;
 const NUM_USERS   = parseInt(process.env.NUM_USERS);
 const ALL_CREDS   = JSON.parse(process.env.LOAD_TEST_CREDENTIALS);
 
+// Returns epoch ms for the session time.
+// If SESSION_TIME env var is provided, use it.
+// Otherwise default to today at 5:00 PM UTC+7 (= 10:00 AM UTC).
+function getSessionTime() {
+  const override = process.env.SESSION_TIME;
+  if (override && override.trim() !== '') {
+    return parseInt(override.trim());
+  }
+  const now = new Date();
+  return Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+    10, 0, 0, 0  // 10:00 AM UTC = 17:00 UTC+7
+  );
+}
+
+function buildRoomUrl(token) {
+  const sessionTime = getSessionTime();
+  return (
+    `${CLIENT_HOST}/classroom/${ROOM_ID}/${token}/` +
+    `?sessiontime=${sessionTime}&showUserlist=false&disablechat=true&hd=true`
+  );
+}
+
 async function getToken(username, password) {
   const url = `${MOODLE_BASE}/login/token.php` +
               `?username=${encodeURIComponent(username)}` +
@@ -21,8 +46,6 @@ async function getToken(username, password) {
 }
 
 (async () => {
-  // Work out which accounts this batch is responsible for.
-  // The last batch may get fewer tabs if num_users is not divisible.
   const start = BATCH * TABS;
   const end   = Math.min(start + TABS, NUM_USERS);
 
@@ -31,14 +54,18 @@ async function getToken(username, password) {
     return;
   }
   if (start >= ALL_CREDS.length) {
-    console.error(`[batch-${BATCH}] ERROR: credentials only has ${ALL_CREDS.length} entries but need index ${start}. Add more accounts to LOAD_TEST_CREDENTIALS.`);
+    console.error(
+      `[batch-${BATCH}] ERROR: credentials only has ${ALL_CREDS.length} entries ` +
+      `but need index ${start}. Add more accounts to LOAD_TEST_CREDENTIALS.`
+    );
     process.exit(1);
   }
 
   const batchCreds = ALL_CREDS.slice(start, end);
-  console.log(`[batch-${BATCH}] responsible for ${batchCreds.length} users: ${batchCreds.map(c => c.username).join(", ")}`);
+  console.log(`[batch-${BATCH}] users: ${batchCreds.map(c => c.username).join(", ")}`);
+  console.log(`[batch-${BATCH}] sessiontime: ${getSessionTime()} (${new Date(getSessionTime()).toISOString()})`);
 
-  // ── Step 1: get tokens ──────────────────────────────────────────────────
+  // Step 1: get tokens
   const batchTokens = await Promise.all(
     batchCreds.map(async ({ username, password }) => {
       const token = await getToken(username, password);
@@ -47,7 +74,7 @@ async function getToken(username, password) {
     })
   );
 
-  // ── Step 2: open browser ────────────────────────────────────────────────
+  // Step 2: open browser
   const browser = await chromium.launch({
     args: [
       "--use-fake-ui-for-media-stream",
@@ -57,16 +84,16 @@ async function getToken(username, password) {
     ],
   });
 
-  // ── Step 3: open tabs and join room ─────────────────────────────────────
+  // Step 3: open tabs and join room
   for (let i = 0; i < batchTokens.length; i++) {
     const { username, token } = batchTokens[i];
-    const url = `${CLIENT_HOST}/classroom/${ROOM_ID}/${token}`;
+    const url = buildRoomUrl(token);
 
     const page = await browser.newPage();
     page.on("pageerror", (e) => console.error(`[${username}] page error: ${e.message}`));
 
     await page.goto(url);
-    console.log(`[${username}] page loaded`);
+    console.log(`[${username}] page loaded — ${url}`);
 
     try {
       const btn = page.locator(
@@ -86,7 +113,7 @@ async function getToken(username, password) {
       await btn.click();
       console.log(`[${username}] entered room`);
     } catch (e) {
-      console.error(`[${username}] could not click enter button: ${e.message}`);
+      console.error(`[${username}] could not click enter: ${e.message}`);
     }
 
     if (i < batchTokens.length - 1) {
@@ -94,7 +121,7 @@ async function getToken(username, password) {
     }
   }
 
-  // ── Step 4: hold ────────────────────────────────────────────────────────
+  // Step 4: hold
   console.log(`[batch-${BATCH}] all bots in room — holding ${HOLD_MS / 1000}s`);
   await new Promise((r) => setTimeout(r, HOLD_MS));
 
