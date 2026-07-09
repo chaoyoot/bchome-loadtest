@@ -68,9 +68,21 @@ jobs:
         working-directory: browser-load-test
         run: npm install
 
-      - name: Install Chromium
+      - name: Cache Playwright Chromium browser
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ hashFiles('browser-load-test/package.json') }}
+
+      - name: Install Chromium browser (download)
         working-directory: browser-load-test
-        run: npx playwright install chromium --with-deps
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium
+
+      - name: Install Chromium system dependencies
+        working-directory: browser-load-test
+        run: npx playwright install-deps chromium
 
       - name: Run bots — batch ${{ matrix.batch }}
         working-directory: browser-load-test
