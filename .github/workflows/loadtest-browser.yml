@@ -108,9 +108,9 @@ jobs:
         working-directory: browser-load-test
         run: npx playwright install-deps chromium
 
-      - name: Install espeak-ng (for speech audio modes)
+      - name: Install audio tools (for speech audio modes)
         if: ${{ inputs.audio_mode != 'beep' }}
-        run: sudo apt-get install -y -q espeak-ng
+        run: sudo apt-get install -y -q espeak-ng ffmpeg
 
       - name: Generate per-student audio files
         if: ${{ inputs.audio_mode != 'beep' }}
