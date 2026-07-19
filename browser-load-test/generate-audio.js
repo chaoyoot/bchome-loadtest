@@ -74,10 +74,16 @@ function run(cmd) {
 }
 
 // ── generate one student's 60-second WAV ─────────────────────────────────────
-// All ffmpeg outputs use -acodec pcm_s16le because Chrome's
-// --use-file-for-fake-audio-capture only accepts 16-bit integer PCM.
-// Without this, filter_complex (amix/concat) outputs 32-bit float WAV
-// and Chrome produces silence.
+// Output: 16 kHz mono 16-bit PCM. This format keeps file size ~2 MB (vs ~12 MB
+// at 48 kHz stereo), which is small enough to embed as base64 in the Web Audio
+// injection script in run-batch.js.
+//
+// The Web Audio API decodes and resamples the WAV to the AudioContext's rate
+// (48 kHz) automatically, so the output rate here doesn't matter for quality.
+//
+// All ffmpeg outputs use -acodec pcm_s16le to guarantee 16-bit integer PCM.
+// filter_complex (amix/concat) produces 32-bit float WAV by default, which the
+// browser's decodeAudioData would still handle, but pcm_s16le keeps it explicit.
 function generateStudent(globalIndex, slot, batch, level, tmpDir, audioDir) {
   const outFile = path.join(audioDir, `batch-${batch}-user-${slot}.wav`);
   const cfg     = LEVEL_CONFIG[level];
@@ -88,7 +94,7 @@ function generateStudent(globalIndex, slot, batch, level, tmpDir, audioDir) {
     run(
       `ffmpeg -y -f lavfi -i "anoisesrc=c=${cfg.noiseColor}:a=${cfg.noiseAmp}:d=60" ` +
       `-af "bandpass=f=150:w=200:width_type=h" ` +
-      `-ar 48000 -ac 2 -acodec pcm_s16le "${outFile}"`
+      `-ar 16000 -ac 1 -acodec pcm_s16le "${outFile}"`
     );
     return outFile;
   }
@@ -105,8 +111,8 @@ function generateStudent(globalIndex, slot, batch, level, tmpDir, audioDir) {
     const conv = path.join(tmpDir, `conv-${slot}-${j}.wav`);
 
     run(`espeak-ng -v "${voice}" -s ${speed} -a ${cfg.amp} "${sentence.replace(/"/g, '\\"')}" -w "${raw}"`);
-    // espeak-ng outputs mono at its own sample rate; convert to 48 kHz stereo 16-bit
-    run(`ffmpeg -y -i "${raw}" -ar 48000 -ac 2 -acodec pcm_s16le "${conv}"`);
+    // espeak-ng outputs mono at its own sample rate; convert to 16 kHz mono 16-bit
+    run(`ffmpeg -y -i "${raw}" -ar 16000 -ac 1 -acodec pcm_s16le "${conv}"`);
     speechFiles.push(conv);
   }
 
@@ -115,9 +121,8 @@ function generateStudent(globalIndex, slot, batch, level, tmpDir, audioDir) {
   for (let j = 0; j <= cfg.segments; j++) {
     const dur = cfg.minPause + rng() * (cfg.maxPause - cfg.minPause);
     const sil = path.join(tmpDir, `sil-${slot}-${j}.wav`);
-    // anullsrc outputs float internally; force 16-bit output
     run(
-      `ffmpeg -y -f lavfi -i "anullsrc=r=48000:cl=stereo" ` +
+      `ffmpeg -y -f lavfi -i "anullsrc=r=16000:cl=mono" ` +
       `-t ${dur.toFixed(2)} -acodec pcm_s16le "${sil}"`
     );
     ordered.push(sil);
@@ -128,11 +133,10 @@ function generateStudent(globalIndex, slot, batch, level, tmpDir, audioDir) {
   const concat     = path.join(tmpDir, `concat-${slot}.wav`);
   const inputFlags = ordered.map(f => `-i "${f}"`).join(" ");
   const filterIn   = ordered.map((_, i) => `[${i}:a]`).join("");
-  // concat filter outputs float internally; force 16-bit on the way out
   run(
     `ffmpeg -y ${inputFlags} ` +
     `-filter_complex "${filterIn}concat=n=${ordered.length}:v=0:a=1[out]" ` +
-    `-map "[out]" -ar 48000 -ac 2 -acodec pcm_s16le "${concat}"`
+    `-map "[out]" -ar 16000 -ac 1 -acodec pcm_s16le "${concat}"`
   );
 
   // Mix background noise into the concat (duration=first → output length = concat)
@@ -140,7 +144,7 @@ function generateStudent(globalIndex, slot, batch, level, tmpDir, audioDir) {
     `ffmpeg -y -i "${concat}" ` +
     `-f lavfi -i "anoisesrc=c=${cfg.noiseColor}:a=${cfg.noiseAmp}:d=300" ` +
     `-filter_complex "[0][1]amix=inputs=2:duration=first" ` +
-    `-ar 48000 -ac 2 -acodec pcm_s16le "${outFile}"`
+    `-ar 16000 -ac 1 -acodec pcm_s16le "${outFile}"`
   );
 
   return outFile;

@@ -18,20 +18,59 @@ fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
 console.log(`[batch-${BATCH}] audio=${AUDIO_MODE} | YouTube: ${ENABLE_YOUTUBE ? "ON" : "off"}`);
 
-// ── audio WAV lookup ──────────────────────────────────────────────────────────
-// generate-audio.js creates one WAV per student before this script runs.
-// Chrome's --use-file-for-fake-audio-capture reads the WAV in its C++ audio
-// kernel (not the renderer), so it is never throttled by Chrome's background
-// page policy — unlike Web Audio API which can be paused for hidden tabs.
-function getAudioFile(slot) {
+// ── Web Audio injection for speech modes ──────────────────────────────────────
+// --use-file-for-fake-audio-capture does not work in Playwright's Chromium —
+// Chrome produces silence instead of reading the WAV.
+//
+// Instead, we override getUserMedia in the page via addInitScript() to return
+// a Web Audio MediaStreamDestination fed from the student's pre-generated WAV.
+// The WAV (espeak-ng speech) passes Opus DTX's WebRTC VAD, unlike a pure sine
+// wave, so the SFU actually transmits audio and the teacher can hear it.
+//
+// The WAV is embedded as base64 inside the injected script (files are ~2 MB
+// at 16 kHz mono, ~2.7 MB base64 — manageable as a local string injection).
+function buildAudioScript(slot) {
   if (AUDIO_MODE === "beep") return null;
-  const f = path.resolve(__dirname, "audio", `batch-${BATCH}-user-${slot}.wav`);
-  if (!fs.existsSync(f)) {
-    console.error(`[batch-${BATCH}] ERROR: audio file missing: ${f}`);
+
+  const wavPath = path.resolve(__dirname, "audio", `batch-${BATCH}-user-${slot}.wav`);
+  if (!fs.existsSync(wavPath)) {
+    console.error(`[batch-${BATCH}] ERROR: audio file missing: ${wavPath}`);
     console.error(`  Make sure the "Generate per-student audio files" step ran.`);
     process.exit(1);
   }
-  return f;
+
+  const wavBase64 = fs.readFileSync(wavPath).toString("base64");
+
+  return `
+(function() {
+  var b64 = "${wavBase64}";
+  var bin = atob(b64);
+  var buf = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  var wavBuf = buf.buffer;
+
+  var _gum = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+  navigator.mediaDevices.getUserMedia = async function(constraints) {
+    var stream = await _gum(constraints);
+    if (!constraints || !constraints.audio) return stream;
+    try {
+      var ctx = new AudioContext({ sampleRate: 48000 });
+      await ctx.resume();
+      var audioBuf = await ctx.decodeAudioData(wavBuf);
+      var dest = ctx.createMediaStreamDestination();
+      var src = ctx.createBufferSource();
+      src.buffer = audioBuf;
+      src.loop = true;
+      src.connect(dest);
+      src.start(0);
+      return new MediaStream([dest.stream.getAudioTracks()[0], ...stream.getVideoTracks()]);
+    } catch (e) {
+      console.warn('[bot-audio] inject failed:', e.message);
+      return stream;
+    }
+  };
+})();
+`;
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -68,36 +107,22 @@ async function screenshot(page, username, label) {
   console.log(`[${username}] screenshot: ${label}`);
 }
 
-function buildChromeArgs(audioFile) {
+function buildChromeArgs() {
   const args = [
     "--use-fake-ui-for-media-stream",
     "--use-fake-device-for-media-stream",
     "--no-sandbox",
     "--disable-setuid-sandbox",
-    // Prevent Chrome from throttling or pausing the renderer when the window
-    // is not visible (always the case in headless/CI). Without these, Web Audio
-    // and media processing can slow down or stop.
     "--disable-renderer-backgrounding",
     "--disable-backgrounding-occluded-windows",
     "--disable-background-timer-throttling",
   ];
-
-  if (audioFile) {
-    // Point Chrome's C++ fake audio capture device at the student's WAV file.
-    // The file must be 16-bit PCM WAV (pcm_s16le) — Chrome ignores float WAV
-    // silently. generate-audio.js ensures the correct format.
-    // --use-file-for-fake-audio-capture is a per-process flag, so each
-    // student needs their own browser launch.
-    args.push(`--use-file-for-fake-audio-capture=${audioFile}`);
-  }
-
   if (ENABLE_YOUTUBE) {
     args.push(
       "--autoplay-policy=no-user-gesture-required",
       "--disable-blink-features=AutomationControlled"
     );
   }
-
   return args;
 }
 
@@ -141,18 +166,17 @@ function buildChromeArgs(audioFile) {
 
   const activeBots = []; // { username, page, browser }
 
+  const chromeArgs = buildChromeArgs();
+
   for (let i = 0; i < batchTokens.length; i++) {
     const { username, token } = batchTokens[i];
-    const audioFile = getAudioFile(i);
-    const url       = buildRoomUrl(token);
+    const url         = buildRoomUrl(token);
+    const audioScript = buildAudioScript(i);
 
-    // One browser per student: --use-file-for-fake-audio-capture is a
-    // process-level flag so each student needs their own Chrome process
-    // to get their unique WAV file. In beep mode we could share one
-    // browser, but keeping the same pattern simplifies the code.
-    const browser = await chromium.launch({ args: buildChromeArgs(audioFile) });
+    const browser = await chromium.launch({ args: chromeArgs });
     const context = await browser.newContext(contextOptions);
     const page    = await context.newPage();
+    if (audioScript) await page.addInitScript({ content: audioScript });
     page.on("pageerror", (e) => console.error(`[${username}] page error: ${e.message}`));
 
     await page.goto(url);
