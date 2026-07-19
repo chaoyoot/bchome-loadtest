@@ -56,7 +56,7 @@ function buildAudioScript(slot) {
     try {
       var ctx = new AudioContext({ sampleRate: 48000 });
       console.log('[bot-audio] ctx state:', ctx.state);
-      var audioBuf = await ctx.decodeAudioData(wavBuf);
+      var audioBuf = await ctx.decodeAudioData(wavBuf.slice(0));
       console.log('[bot-audio] decoded WAV:', audioBuf.duration.toFixed(1) + 's', audioBuf.sampleRate + 'Hz');
       var dest = ctx.createMediaStreamDestination();
       var src = ctx.createBufferSource();
