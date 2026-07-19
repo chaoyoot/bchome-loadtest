@@ -108,6 +108,21 @@ jobs:
         working-directory: browser-load-test
         run: npx playwright install-deps chromium
 
+      - name: Install audio tools (for speech modes)
+        if: ${{ inputs.audio_mode != 'beep' }}
+        run: sudo apt-get install -y -q espeak-ng ffmpeg
+
+      - name: Generate per-student audio files
+        if: ${{ inputs.audio_mode != 'beep' }}
+        working-directory: browser-load-test
+        env:
+          BATCH:               ${{ matrix.batch }}
+          TABS_PER_BATCH:      ${{ inputs.tabs_per_batch }}
+          NUM_USERS:           ${{ inputs.num_users }}
+          AUDIO_MODE:          ${{ inputs.audio_mode }}
+          NOISE_DISTRIBUTION:  ${{ inputs.noise_distribution }}
+        run: node generate-audio.js
+
       - name: Run bots — batch ${{ matrix.batch }}
         working-directory: browser-load-test
         env:
