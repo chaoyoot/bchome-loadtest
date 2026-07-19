@@ -50,8 +50,8 @@ on:
           - mix
         default: beep
       noise_distribution:
-        description: 'mix mode only — % of bots at quiet,whisper,talking,noisy (must sum to 100)'
-        default: '40,30,20,10'
+        description: 'mix mode only — ratio of bots at quiet,whisper,talking,noisy (e.g. 4,3,2,1 = 40/30/20/10%). Values cycle, so sum should divide evenly into num_users (sum of 10 works for any multiple of 10 users).'
+        default: '4,3,2,1'
 
 jobs:
   setup:
