@@ -32,10 +32,26 @@ on:
         description: 'Enable YouTube playback in bots (tests YouTube load in classroom)'
         type: boolean
         default: false
-      simulate_speech:
-        description: 'Replace sine wave beep with text-to-speech audio (simulates students speaking)'
-        type: boolean
-        default: false
+      audio_mode:
+        description: |
+          beep       — Chrome sine wave (default, no setup)
+          quiet      — all bots: very faint noise, mic open but nearly silent
+          whisper    — all bots: soft voice, short sentences, long pauses
+          talking    — all bots: clear voice, medium sentences, moderate pauses
+          noisy      — all bots: loud voice, long sentences, short pauses + crowd noise
+          mix        — each bot assigned a level by noise_distribution below
+        type: choice
+        options:
+          - beep
+          - quiet
+          - whisper
+          - talking
+          - noisy
+          - mix
+        default: beep
+      noise_distribution:
+        description: 'mix mode only — % of bots at quiet,whisper,talking,noisy (must sum to 100)'
+        default: '40,30,20,10'
 
 jobs:
   setup:
@@ -92,17 +108,20 @@ jobs:
         working-directory: browser-load-test
         run: npx playwright install-deps chromium
 
-      - name: Generate speech audio file
-        if: ${{ inputs.simulate_speech == true }}
-        run: |
-          sudo apt-get install -y -q espeak-ng
-          espeak-ng -v en -s 130 -p 50 \
-            "Hello teacher. I am here and ready to learn. Can everyone hear me? Let us start the class." \
-            -w /tmp/tts-raw.wav
-          ffmpeg -y -i /tmp/tts-raw.wav \
-            -ar 48000 -ac 2 -acodec pcm_s16le \
-            browser-load-test/fake-speech.wav
-          echo "Speech audio generated: $(du -h browser-load-test/fake-speech.wav)"
+      - name: Install espeak-ng (for speech audio modes)
+        if: ${{ inputs.audio_mode != 'beep' }}
+        run: sudo apt-get install -y -q espeak-ng
+
+      - name: Generate per-student audio files
+        if: ${{ inputs.audio_mode != 'beep' }}
+        working-directory: browser-load-test
+        env:
+          BATCH:               ${{ matrix.batch }}
+          TABS_PER_BATCH:      ${{ inputs.tabs_per_batch }}
+          NUM_USERS:           ${{ inputs.num_users }}
+          AUDIO_MODE:          ${{ inputs.audio_mode }}
+          NOISE_DISTRIBUTION:  ${{ inputs.noise_distribution }}
+        run: node generate-audio.js
 
       - name: Run bots — batch ${{ matrix.batch }}
         working-directory: browser-load-test
@@ -116,7 +135,8 @@ jobs:
           BATCH:                 ${{ matrix.batch }}
           SESSION_TIME:          ${{ inputs.session_time }}
           ENABLE_YOUTUBE:        ${{ inputs.enable_youtube }}
-          SIMULATE_SPEECH:       ${{ inputs.simulate_speech }}
+          AUDIO_MODE:            ${{ inputs.audio_mode }}
+          NOISE_DISTRIBUTION:    ${{ inputs.noise_distribution }}
           LOAD_TEST_CREDENTIALS: ${{ secrets.LOAD_TEST_CREDENTIALS }}
         run: node run-batch.js
 
@@ -127,116 +147,3 @@ jobs:
           name: screenshots-batch-${{ matrix.batch }}
           path: browser-load-test/screenshots/
           if-no-files-found: ignore
-
-# name: Browser load test (configurable users)
-
-# on:
-#   workflow_dispatch:
-#     inputs:
-#       num_users:
-#         description: 'Number of student bots (1–1000)'
-#         required: true
-#         default: '20'
-#       tabs_per_batch:
-#         description: 'Chrome tabs per job — keep at 10'
-#         default: '10'
-#       hold_minutes:
-#         description: 'Minutes bots stay in room (100 users→10, 500→20, 1000→30)'
-#         default: '10'
-#       client_host:
-#         description: 'Client URL'
-#         required: true
-#         default: 'https://home-th.braincloudlearning.com'
-#       moodle_base:
-#         description: 'Moodle URL'
-#         required: true
-#         default: 'https://admin.braincloudlearning.com'
-#       room_id:
-#         description: 'Test room ID (NOT a real class)'
-#         required: true
-#         default: 'c2c_trn_g1.1_chaoyootk_engl'
-#       session_time:
-#         description: 'Session time as epoch ms. Leave blank to use today at 17:00 UTC+7 automatically.'
-#         default: ''
-#       enable_youtube:
-#         description: 'Enable YouTube playback in bots (tests YouTube load in classroom)'
-#         type: boolean
-#         default: false
-
-# jobs:
-#   setup:
-#     runs-on: ubuntu-latest
-#     outputs:
-#       matrix: ${{ steps.build-matrix.outputs.matrix }}
-#     steps:
-#       - name: Build job matrix
-#         id: build-matrix
-#         run: |
-#           NUM_USERS=${{ inputs.num_users }}
-#           TABS=${{ inputs.tabs_per_batch }}
-#           NUM_JOBS=$(( (NUM_USERS + TABS - 1) / TABS ))
-#           if [ $NUM_JOBS -gt 256 ]; then NUM_JOBS=256; fi
-#           MATRIX=$(node -e "
-#             const n = $NUM_JOBS;
-#             console.log(JSON.stringify({ batch: Array.from({length: n}, (_, i) => i) }));
-#           ")
-#           echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
-#           echo "Need $NUM_JOBS jobs for $NUM_USERS users"
-
-#   student-bots:
-#     needs: setup
-#     strategy:
-#       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
-#       fail-fast: false
-#     runs-on: ubuntu-latest
-#     steps:
-#       - name: Checkout repo
-#         uses: actions/checkout@v4
-
-#       - name: Setup Node.js
-#         uses: actions/setup-node@v4
-#         with:
-#           node-version: '24'
-
-#       - name: Install dependencies
-#         working-directory: browser-load-test
-#         run: npm install
-
-#       - name: Cache Playwright Chromium browser
-#         uses: actions/cache@v4
-#         id: playwright-cache
-#         with:
-#           path: ~/.cache/ms-playwright
-#           key: playwright-chromium-${{ hashFiles('browser-load-test/package.json') }}
-
-#       - name: Install Chromium browser (download)
-#         working-directory: browser-load-test
-#         if: steps.playwright-cache.outputs.cache-hit != 'true'
-#         run: npx playwright install chromium
-
-#       - name: Install Chromium system dependencies
-#         working-directory: browser-load-test
-#         run: npx playwright install-deps chromium
-
-#       - name: Run bots — batch ${{ matrix.batch }}
-#         working-directory: browser-load-test
-#         env:
-#           CLIENT_HOST:           ${{ inputs.client_host }}
-#           MOODLE_BASE:           ${{ inputs.moodle_base }}
-#           ROOM_ID:               ${{ inputs.room_id }}
-#           NUM_USERS:             ${{ inputs.num_users }}
-#           HOLD_MINUTES:          ${{ inputs.hold_minutes }}
-#           TABS_PER_BATCH:        ${{ inputs.tabs_per_batch }}
-#           BATCH:                 ${{ matrix.batch }}
-#           SESSION_TIME:          ${{ inputs.session_time }}
-#           ENABLE_YOUTUBE:        ${{ inputs.enable_youtube }}
-#           LOAD_TEST_CREDENTIALS: ${{ secrets.LOAD_TEST_CREDENTIALS }}
-#         run: node run-batch.js
-
-#       - name: Upload screenshots
-#         if: always()
-#         uses: actions/upload-artifact@v4
-#         with:
-#           name: screenshots-batch-${{ matrix.batch }}
-#           path: browser-load-test/screenshots/
-#           if-no-files-found: ignore
