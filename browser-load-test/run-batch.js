@@ -55,14 +55,16 @@ function buildAudioScript(slot) {
     if (!constraints || !constraints.audio) return stream;
     try {
       var ctx = new AudioContext({ sampleRate: 48000 });
-      await ctx.resume();
+      console.log('[bot-audio] ctx state:', ctx.state);
       var audioBuf = await ctx.decodeAudioData(wavBuf);
+      console.log('[bot-audio] decoded WAV:', audioBuf.duration.toFixed(1) + 's', audioBuf.sampleRate + 'Hz');
       var dest = ctx.createMediaStreamDestination();
       var src = ctx.createBufferSource();
       src.buffer = audioBuf;
       src.loop = true;
       src.connect(dest);
       src.start(0);
+      console.log('[bot-audio] audio injected OK');
       return new MediaStream([dest.stream.getAudioTracks()[0], ...stream.getVideoTracks()]);
     } catch (e) {
       console.warn('[bot-audio] inject failed:', e.message);
@@ -116,12 +118,12 @@ function buildChromeArgs() {
     "--disable-renderer-backgrounding",
     "--disable-backgrounding-occluded-windows",
     "--disable-background-timer-throttling",
+    // Required for AudioContext to run without a user gesture (headless bots
+    // never trigger a user gesture, so AudioContext stays suspended otherwise).
+    "--autoplay-policy=no-user-gesture-required",
   ];
   if (ENABLE_YOUTUBE) {
-    args.push(
-      "--autoplay-policy=no-user-gesture-required",
-      "--disable-blink-features=AutomationControlled"
-    );
+    args.push("--disable-blink-features=AutomationControlled");
   }
   return args;
 }
@@ -178,6 +180,9 @@ function buildChromeArgs() {
     const page    = await context.newPage();
     if (audioScript) await page.addInitScript({ content: audioScript });
     page.on("pageerror", (e) => console.error(`[${username}] page error: ${e.message}`));
+    if (audioScript) page.on("console", (msg) => {
+      if (msg.text().includes("[bot-audio]")) console.log(`[${username}] ${msg.text()}`);
+    });
 
     await page.goto(url);
     console.log(`[${username}] page loaded`);
