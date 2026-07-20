@@ -89,11 +89,35 @@ function generateStudent(globalIndex, slot, batch, level, tmpDir, audioDir) {
   const cfg     = LEVEL_CONFIG[level];
   const rng     = makeRng(globalIndex * 137 + 7);
 
-  // Level 0: quiet breath-like noise, no TTS
+  // Level 0: one very quiet utterance per cycle with quiet background noise.
+  // Pure noise cannot reach the teacher because Opus DTX (WebRTC VAD) only
+  // transmits speech-like audio — it suppresses non-speech regardless of amplitude.
+  // One barely-audible word passes DTX so the noise mixed underneath is audible.
   if (level === 0) {
+    const voice    = VOICES[globalIndex % VOICES.length];
+    const speed    = 100 + (globalIndex % 4) * 5;          // 100–115 wpm, drowsy
+    const sentence = SENTENCES[1][globalIndex % SENTENCES[1].length];
+    const raw    = path.join(tmpDir, `raw-${slot}-0.wav`);
+    const conv   = path.join(tmpDir, `conv-${slot}-0.wav`);
+    const sil0   = path.join(tmpDir, `sil-${slot}-0.wav`);
+    const sil1   = path.join(tmpDir, `sil-${slot}-1.wav`);
+    const concat = path.join(tmpDir, `concat-${slot}.wav`);
+    const leadIn  = 3 + rng() * 5;    // 3–8 s lead-in
+    const tailOut = 40 + rng() * 15;  // 40–55 s tail (long quiet stretch)
+
+    run(`espeak-ng -v "${voice}" -s ${speed} -a 12 "${sentence.replace(/"/g, '\\"')}" -w "${raw}"`);
+    run(`ffmpeg -y -i "${raw}" -ar 16000 -ac 1 -acodec pcm_s16le "${conv}"`);
+    run(`ffmpeg -y -f lavfi -i "anullsrc=r=16000:cl=mono" -t ${leadIn.toFixed(2)} -acodec pcm_s16le "${sil0}"`);
+    run(`ffmpeg -y -f lavfi -i "anullsrc=r=16000:cl=mono" -t ${tailOut.toFixed(2)} -acodec pcm_s16le "${sil1}"`);
     run(
-      `ffmpeg -y -f lavfi -i "anoisesrc=c=${cfg.noiseColor}:a=${cfg.noiseAmp}:d=60" ` +
-      `-af "bandpass=f=150:w=200:width_type=h" ` +
+      `ffmpeg -y -i "${sil0}" -i "${conv}" -i "${sil1}" ` +
+      `-filter_complex "[0:a][1:a][2:a]concat=n=3:v=0:a=1[out]" ` +
+      `-map "[out]" -ar 16000 -ac 1 -acodec pcm_s16le "${concat}"`
+    );
+    run(
+      `ffmpeg -y -i "${concat}" ` +
+      `-f lavfi -i "anoisesrc=c=${cfg.noiseColor}:a=${cfg.noiseAmp}:d=300" ` +
+      `-filter_complex "[0][1]amix=inputs=2:duration=first" ` +
       `-ar 16000 -ac 1 -acodec pcm_s16le "${outFile}"`
     );
     return outFile;
