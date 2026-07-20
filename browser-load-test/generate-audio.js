@@ -139,13 +139,14 @@ function generateStudent(globalIndex, slot, batch, level, tmpDir, audioDir) {
     `-map "[out]" -ar 16000 -ac 1 -acodec pcm_s16le "${concat}"`
   );
 
-  // Mix background noise into the concat (duration=first → output length = concat)
-  run(
-    `ffmpeg -y -i "${concat}" ` +
-    `-f lavfi -i "anoisesrc=c=${cfg.noiseColor}:a=${cfg.noiseAmp}:d=300" ` +
-    `-filter_complex "[0][1]amix=inputs=2:duration=first" ` +
-    `-ar 16000 -ac 1 -acodec pcm_s16le "${outFile}"`
-  );
+  // // Mix background noise behind speech (uncomment to re-enable)
+  // run(
+  //   `ffmpeg -y -i "${concat}" ` +
+  //   `-f lavfi -i "anoisesrc=c=${cfg.noiseColor}:a=${cfg.noiseAmp}:d=300" ` +
+  //   `-filter_complex "[0][1]amix=inputs=2:duration=first" ` +
+  //   `-ar 16000 -ac 1 -acodec pcm_s16le "${outFile}"`
+  // );
+  fs.copyFileSync(concat, outFile);
 
   return outFile;
 }
