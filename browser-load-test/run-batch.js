@@ -87,7 +87,7 @@ function buildRoomUrl(token) {
   const sessionTime = getSessionTime();
   return (
     `${CLIENT_HOST}/classroom/${ROOM_ID}/${token}/` +
-    `?sessiontime=${sessionTime}&showUserlist=false&disablechat=true&hd=true`
+    `?sessiontime=${sessionTime}&showUserlist=true&disablechat=true&hd=true`
   );
 }
 
