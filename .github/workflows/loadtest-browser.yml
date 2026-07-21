@@ -108,6 +108,9 @@ jobs:
         working-directory: browser-load-test
         run: npx playwright install-deps chromium
 
+      - name: Install Xvfb (virtual display for WebRTC video rendering)
+        run: sudo apt-get install -y -q xvfb
+
       - name: Install audio tools (for speech modes)
         if: ${{ inputs.audio_mode != 'beep' }}
         run: sudo apt-get install -y -q espeak-ng ffmpeg
@@ -138,7 +141,11 @@ jobs:
           AUDIO_MODE:            ${{ inputs.audio_mode }}
           NOISE_DISTRIBUTION:    ${{ inputs.noise_distribution }}
           LOAD_TEST_CREDENTIALS: ${{ secrets.LOAD_TEST_CREDENTIALS }}
-        run: node run-batch.js
+        # xvfb-run provides a virtual X display so Chrome runs in non-headless
+        # mode. This makes the video compositor fully active, which causes the
+        # canplay event to fire for remote WebRTC streams — without it, remote
+        # video never passes PeerView's videoCanPlay gate and shows as avatars.
+        run: xvfb-run -a -s "-screen 0 1280x720x24" node run-batch.js
 
       - name: Upload screenshots
         if: always()

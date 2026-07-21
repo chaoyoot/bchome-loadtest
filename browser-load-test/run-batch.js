@@ -175,7 +175,7 @@ function buildChromeArgs() {
     const url         = buildRoomUrl(token);
     const audioScript = buildAudioScript(i);
 
-    const browser = await chromium.launch({ args: chromeArgs });
+    const browser = await chromium.launch({ headless: false, args: chromeArgs });
     const context = await browser.newContext(contextOptions);
     const page    = await context.newPage();
     if (audioScript) await page.addInitScript({ content: audioScript });
