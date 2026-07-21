@@ -121,6 +121,10 @@ function buildChromeArgs() {
     // Required for AudioContext to run without a user gesture (headless bots
     // never trigger a user gesture, so AudioContext stays suspended otherwise).
     "--autoplay-policy=no-user-gesture-required",
+    // Chromium in Docker containers uses /tmp instead of /dev/shm (which is
+    // often only 64 MB in containers). --shm-size=2g on the container helps
+    // too, but this flag makes Chrome not rely on /dev/shm at all.
+    "--disable-dev-shm-usage",
   ];
   if (ENABLE_YOUTUBE) {
     args.push("--disable-blink-features=AutomationControlled");

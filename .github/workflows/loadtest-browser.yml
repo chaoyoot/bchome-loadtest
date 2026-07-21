@@ -79,41 +79,35 @@ jobs:
       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
       fail-fast: false
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    # Pre-built image with Node.js, Chromium + all system deps, espeak-ng, ffmpeg, xvfb.
+    # Built once by build-image.yml; pulled from cache on every run — no apt-get needed.
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/bchome-loadtest:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --shm-size=2g
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        id: npm-cache
         with:
-          node-version: '24'
+          path: browser-load-test/node_modules
+          key: npm-${{ hashFiles('browser-load-test/package.json') }}
 
       - name: Install dependencies
+        if: steps.npm-cache.outputs.cache-hit != 'true'
         working-directory: browser-load-test
+        # Chromium is already in the Docker image at /ms-playwright — skip re-download.
         run: npm install
-
-      - name: Cache Playwright Chromium browser
-        uses: actions/cache@v4
-        id: playwright-cache
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ hashFiles('browser-load-test/package.json') }}
-
-      - name: Install Chromium browser (download)
-        working-directory: browser-load-test
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: npx playwright install chromium
-
-      - name: Install Chromium system dependencies
-        working-directory: browser-load-test
-        run: npx playwright install-deps chromium
-
-      - name: Install Xvfb (virtual display for WebRTC video rendering)
-        run: sudo apt-get install -y -q xvfb
-
-      - name: Install audio tools (for speech modes)
-        if: ${{ inputs.audio_mode != 'beep' }}
-        run: sudo apt-get install -y -q espeak-ng ffmpeg
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
 
       - name: Generate per-student audio files
         if: ${{ inputs.audio_mode != 'beep' }}
