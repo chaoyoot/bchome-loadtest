@@ -16,7 +16,7 @@ on:
       client_host:
         description: 'Client URL'
         required: true
-        default: 'https://home-th.braincloudlearning.com'
+        default: 'https://home-th-staging.braincloudlearning.com'
       moodle_base:
         description: 'Moodle URL'
         required: true
